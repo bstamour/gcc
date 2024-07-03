@@ -649,6 +649,103 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   template<typename _Callback>
     stop_callback(stop_token, _Callback) -> stop_callback<_Callback>;
 
+  template<typename CallbackFn, typename Token, typename Initializer = CallbackFn>
+    concept __stoppable_callback_for =
+      invocable<CallbackFn> &&
+      constructible_from<CallbackFn, Initializer> &&
+      requires { typename stop_callback_for_t<Token, CallbackFn>; } &&
+      constructible_from<stop_callback_for_t<Token, CallbackFn>,
+        const Token&, Initializer>;
+
+  class never_stop_token
+  {
+    struct __callback_type {
+      explicit __callback_type(never_stop_token, auot&&) noexcept {}
+    };
+
+  public:
+    template <typename>
+      using callback_type = __callback_type;
+
+    static constexpr bool stop_requested() noexcept { return false; }
+    static constexpr bool stop_possible() noexcept { return false; }
+    bool operator==(const never_stop_token&) const = default;
+  };
+
+  
+  class inplace_stop_source
+  {
+    atomic_bool __stop_requested = false;
+  
+  public:
+    constexpr inplace_stop_source() noexcept;
+
+    inplace_stop_source(inplace_stop_source&&) = delete;
+    inplace_stop_source(const inplace_stop_source&) = delete;
+
+    ~inplace_stop_source() {}
+
+    constexpr inplace_stop_token get_token() const noexcept;
+    static constexpr bool stop_possible() noexcept { return true; }
+    bool stop_requested() const noexcept { return __stop_requested; }
+    bool request_stop() noexcept { __stop_requested = true; }
+  };
+
+  class inplace_stop_token
+  {
+  public:
+    template<typename CallbackFn>
+      using callback_type = inplace_stop_callback<CallbackFn>;
+
+    inplace_stop_token() = default;
+    bool operator==(const inplace_stop_token&) const = default;
+
+    bool stop_requested() const noexcept
+    {
+      return __stop_source != nullptr && __stop_source->stop_requested();
+    }
+    
+    bool stop_possible() const noexcept
+    {
+      return __stop_source != nullptr;
+    }
+    
+    void swap(inplace_stop_token& other) noexcept
+    {
+      using std::swap;
+      swap(__stop_source, other.__stop_source);
+    }
+
+  private:
+    const inplace_stop_source* __stop_source = nullptr;
+    friend inplace_stop_source;
+    explicit inplace_stop_token(inplace_stop_source* src)
+      : __stop_source(src) {}
+  };
+
+  inline inplace_stop_source::get_token() const noexcept
+  {
+    return inplace_stop_token{this};
+  }
+
+  template<typename CallbackFn>
+  class inplace_stop_callback {
+  public:
+    using callback_type = CallbackFn;
+
+    template<typename Initializer>
+      explicit inplace_stop_callback(inplace_stop_token st,
+        Initializer&& init)
+        noexcept(is_nothrow_constructible_v<CallbackFn, Initializer>);
+
+    ~inplace_stop_callback();
+
+  private:
+    CallbackFn __callback_fn;
+  };
+
+
+  
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace
 #endif // __cplusplus > 201703L
